@@ -1,0 +1,271 @@
+# この分類を経由して各形式を生成する。根拠コメントが分類理由の正本。
+REQ-001:
+  text: 設定画面に mode の切替を一つ追加する。
+  gherkin: true # 設定画面の観察
+  quint: false # UI の配置であり遷移条件ではない
+  alloy: false # UI の個数でありエンティティ関係を追加しない
+REQ-002:
+  text: mode は管理対象端末に共通する設定とする。
+  gherkin: true # 端末アプリ変更後も同じ設定を観察
+  quint: false # 設定の共有は静的な関係で扱う
+  alloy: true # 複数の管理対象と一つの設定との関係
+REQ-003:
+  text: mode の既定値はオフとする。
+  gherkin: true # 初期設定の観察
+  quint: true # init の mode
+  alloy: false # 初期状態であり構造ではない
+REQ-004:
+  text: mode がオフの場合、既存の表示動作を維持する。
+  gherkin: true # 既存操作との比較
+  quint: false # 既存の全表示機能の再モデル化はせず Gherkin で比較する
+  alloy: false # 状態と表示動作であり構造ではない
+REQ-005:
+  text: mode がオンで showOrRecall を行う場合、Terminal を非フルスクリーンの通常の縦横最大化で表示する。
+  gherkin: true # 表示された窓状態
+  quint: true # showOrRecall の次状態
+  alloy: false # 窓の状態遷移であり構造ではない
+REQ-006:
+  text: mode がオンの場合、通常の縦横最大化を幅・高さ・水平配置の指定より優先する。
+  gherkin: true # 指定値と実際の形状の比較
+  quint: true # showOrRecall と setMode の形状
+  alloy: false # 優先する表示動作であり構造ではない
+REQ-007:
+  text: mode の切替によって幅・高さ・水平配置の保存値を変更しない。
+  gherkin: true # 設定の再読出し
+  quint: true # saved の保存
+  alloy: false # 保存値の不変条件であり構造ではない
+REQ-008:
+  text: 表示先モニターの既存の選択方針を変更しない。
+  gherkin: true # 既存モニター選択との比較
+  quint: false # 選択アルゴリズムは既存動作との比較で確認する
+  alloy: false # 選択方針でありモニター関係の制約ではない
+REQ-009:
+  text: ショートカットの既存の表示・呼び戻し・非表示の分岐を変更しない。
+  gherkin: true # 既存操作との比較
+  quint: false # 分岐は既存動作を維持しモデルには showOrRecall だけを入力する
+  alloy: false # 操作分岐であり構造ではない
+REQ-010:
+  text: 既存のアニメーションを維持する。
+  gherkin: true # 表示動作の比較
+  quint: false # アニメーションの時間・描画は離散状態モデルに含めない
+  alloy: false # 描画動作であり構造ではない
+REQ-011:
+  text: 既存の自動非表示動作を維持する。
+  gherkin: true # 自動非表示の比較
+  quint: false # 既存動作全体の比較は Gherkin、Clipboard の条件分離は REQ-023
+  alloy: false # 自動非表示の遷移であり構造ではない
+REQ-012:
+  text: Terminal の表示中に mode をオンにした場合、通常の縦横最大化を即時に反映する。
+  gherkin: true # 設定操作後の窓状態
+  quint: true # setMode(true)
+  alloy: false # 設定変更の遷移であり構造ではない
+REQ-013:
+  text: Terminal の表示中に mode をオフにした場合、保存値による元のサイズ・水平配置を即時に反映する。
+  gherkin: true # 設定操作後の形状
+  quint: true # setMode(false)
+  alloy: false # 設定変更の遷移であり構造ではない
+REQ-014:
+  text: Terminal が隠れている間の mode の切替は、隠れたまま次の表示に適用する。
+  gherkin: true # 非表示の維持と次回表示
+  quint: true # setMode と showOrRecall
+  alloy: false # 時系列の動作であり構造ではない
+REQ-015:
+  text: eligible の場合だけ、Terminal と同じ Monitor の Panel を非表示にする。
+  gherkin: true # 正常系と各条件の否定
+  quint: true # eligible と reconcile
+  alloy: false # 可変の eligibility は Quint が担当する
+REQ-016:
+  text: Panel を非表示にする間、Panel 自身の Reservation を解放する。
+  gherkin: true # パネルと作業領域の観察
+  quint: true # panelReserved
+  alloy: false # 解放と復元は状態遷移であり構造ではない
+REQ-017:
+  text: 別の Monitor の Panel を変更しない。
+  gherkin: true # 別モニターの比較
+  quint: true # モニターごとの panelVisible と panelReserved
+  alloy: true # 操作対象と管理窓の同一 Monitor 関係
+REQ-018:
+  text: 他のドック・拡張の Reservation を変更しない。
+  gherkin: true # 他の予約領域の比較
+  quint: false # 予約の所有関係は Alloy、具体的領域は Gherkin で扱う
+  alloy: true # Reservation の所有者による操作対象の限定
+REQ-019:
+  text: 端末側の透過設定を変更しない。
+  gherkin: true # 端末設定の前後比較
+  quint: false # 端末側の設定は拡張の状態ではない
+  alloy: false # 設定変更の禁止であり構造ではない
+REQ-020:
+  text: eligible を失った場合、自分が行った Panel の表示・Reservation の変更だけを取り消す。
+  gherkin: true # 全復元契機の外部観察
+  quint: true # 各環境イベントと reconcile
+  alloy: false # 復元の時系列は Quint が担当する
+REQ-021:
+  text: 元から非表示だった Panel を復元時に強制表示しない。
+  gherkin: true # 既存の非表示の維持
+  quint: true # baselineVisible の尊重
+  alloy: false # 表示の復元であり構造ではない
+REQ-022:
+  text: SameApp・Dialog・Clipboard へのフォーカス移動も Terminal 自身からのフォーカス喪失としてパネル条件に適用する。
+  gherkin: true # 各別窓の例
+  quint: true # focus の窓識別
+  alloy: false # フォーカスの可変条件は Quint が担当する
+REQ-023:
+  text: Clipboard に対する既存の例外は端末の自動非表示にだけ適用する。
+  gherkin: true # 端末とパネルの異なる結果
+  quint: true # focusWindow の Clipboard 分岐
+  alloy: false # 自動非表示条件であり構造ではない
+REQ-024:
+  text: 手動変更後に Terminal へフォーカスが戻るだけでは Terminal の窓状態を変更しない。
+  gherkin: true # 手動変更後の再フォーカス
+  quint: true # focusWindow の形状保存
+  alloy: false # 窓状態の保存であり構造ではない
+REQ-025:
+  text: mode がオンの場合、手動変更後の次の showOrRecall で通常の縦横最大化に戻す。
+  gherkin: true # 呼び戻し後の形状
+  quint: true # showOrRecall
+  alloy: false # 呼び戻しの遷移であり構造ではない
+REQ-026:
+  text: 拡張の停止時に Terminal の形状を変更しない。
+  gherkin: true # 無効化前後の形状
+  quint: true # stop の形状保存
+  alloy: false # 停止時の遷移であり構造ではない
+REQ-027:
+  text: 拡張の停止時に Terminal を終了させない。
+  gherkin: true # 無効化後の生存
+  quint: true # stop の alive 保存
+  alloy: false # 生存の状態変化であり構造ではない
+REQ-028:
+  text: モニター間の移動、主モニター変更、切断・再接続後は現在の配置でパネル条件を再判定する。
+  gherkin: true # 配置変更後の結果
+  quint: true # topology
+  alloy: false # トポロジー変更後の再判定は遷移で扱う
+REQ-029:
+  text: 再配置は GNOME に任せ、以前の物理モニターへ独自に戻さない。
+  gherkin: true # GNOME の現在配置を維持
+  quint: true # topology は GNOME の配置を入力として保持
+  alloy: false # 再配置の動作であり静的関係ではない
+REQ-030:
+  text: 一つの論理画面になったミラー表示の物理出力を別々の Monitor として扱わない。
+  gherkin: true # ミラー構成での観察
+  quint: false # 物理出力と論理 Monitor の関係は Alloy が担当する
+  alloy: true # 複数の物理出力から同じ論理 Monitor への写像
+REQ-031:
+  text: 共通の作業領域の変更による GNOME の他の最大化窓の一時的な拡大は許容する。
+  gherkin: true # 許容される外部の結果
+  quint: false # 他の窓への GNOME の再配置は拡張の遷移と区別する
+  alloy: false # 許容する描画結果であり構造制約ではない
+REQ-032:
+  text: 拡張は他の窓を直接操作しない。
+  gherkin: true # 操作対象の外部検査
+  quint: false # 直接操作の対象集合は Alloy で表現する
+  alloy: true # 直接操作対象を Terminal に限定する関係
+REQ-033:
+  text: GNOME Shell 45〜51 の既存の対応宣言を維持する。
+  gherkin: true # 配布メタデータを読む外部検査
+  quint: false # 成果物の静的な検査であり実行状態ではない
+  alloy: false # メタデータの値でありエンティティ関係ではない
+REQ-034:
+  text: 新しく利用する機能を対象の GNOME Shell バージョンと照合する。
+  gherkin: true # API 照合結果を読む外部検査
+  quint: false # 実装検証工程であり状態遷移ではない
+  alloy: false # API の照合であり関係モデルではない
+REQ-035:
+  text: 後続実装は既存の lint に合格する。
+  gherkin: true # 検査コマンドの応答
+  quint: false # 実装検証工程であり状態遷移ではない
+  alloy: false # 構文検査であり関係モデルではない
+REQ-036:
+  text: 後続実装は既存のスキーマコンパイルに合格する。
+  gherkin: true # ビルドコマンドの応答
+  quint: false # 実装検証工程であり状態遷移ではない
+  alloy: false # ビルド結果であり関係モデルではない
+REQ-037:
+  text: 後続実装は既存のパッケージ作成に合格する。
+  gherkin: true # パッケージコマンドの応答
+  quint: false # 実装検証工程であり状態遷移ではない
+  alloy: false # 配布工程であり関係モデルではない
+REQ-038:
+  text: 配布 ZIP に実装に必要なファイルが含まれることを確認する。
+  gherkin: true # ZIP の内容を読む外部検査
+  quint: false # 成果物検査であり状態遷移ではない
+  alloy: false # 実装ファイル一覧未確定のため具体的成果物を検査する
+REQ-039:
+  text: 本体が実際に利用するパネル判断の小さな node:test を後続実装に含める。
+  gherkin: true # テスト実行と本体からの利用を外部検査
+  quint: false # テスト構成の要求であり実行時の窓状態ではない
+  alloy: false # 実装の配線を読む検査であり要求ドメインの関係ではない
+REQ-040:
+  text: そのテストはフォーカス条件の取り違えを検出する。
+  gherkin: true # 条件を誤らせた場合のテスト失敗
+  quint: false # 後続テストの検出力は形式モデルの証明と区別する
+  alloy: false # テストの検出力であり静的関係ではない
+REQ-041:
+  text: そのテストは最大化条件の取り違えを検出する。
+  gherkin: true # 条件を誤らせた場合のテスト失敗
+  quint: false # 後続テストの検出力は形式モデルの証明と区別する
+  alloy: false # テストの検出力であり静的関係ではない
+REQ-042:
+  text: そのテストはモニター条件の取り違えを検出する。
+  gherkin: true # 条件を誤らせた場合のテスト失敗
+  quint: false # 後続テストの検出力は形式モデルの証明と区別する
+  alloy: false # テストの検出力であり静的関係ではない
+REQ-043:
+  text: そのテストは復元条件の取り違えを検出する。
+  gherkin: true # 条件を誤らせた場合のテスト失敗
+  quint: false # 後続テストの検出力は形式モデルの証明と区別する
+  alloy: false # テストの検出力であり静的関係ではない
+REQ-044:
+  text: 後続実装で新しい依存を追加しない。
+  gherkin: true # 依存宣言と利用箇所の差分検査
+  quint: false # 変更範囲の制約であり実行状態ではない
+  alloy: false # 具体的な差分を検査するため関係モデルは不要
+REQ-045:
+  text: 後続実装で CI を追加しない。
+  gherkin: true # 成果物の差分検査
+  quint: false # 変更範囲の制約であり実行状態ではない
+  alloy: false # 具体的な差分を検査するため関係モデルは不要
+REQ-046:
+  text: 後続実装で GUI テスト基盤を追加しない。
+  gherkin: true # 成果物の差分検査
+  quint: false # 変更範囲の制約であり実行状態ではない
+  alloy: false # 具体的な差分を検査するため関係モデルは不要
+REQ-047:
+  text: 対象環境で人が透過・非フルスクリーンの縦横最大化・他予約がない場合の Monitor 全体と上端を観察する。
+  gherkin: true # 人の画面観察
+  quint: false # コンポジターの描画をモデルから証明しない
+  alloy: false # 実画面の描画であり静的関係ではない
+REQ-048:
+  text: 対象環境で別アプリへ切り替えた後、人が最大化の維持と Panel・Reservation の復元を観察する。
+  gherkin: true # 人の画面観察
+  quint: false # 実環境の観察要件は抽象モデルの結果と区別する
+  alloy: false # 実画面の観察であり静的関係ではない
+REQ-049:
+  text: 他の環境での背景透過は保証の対象外とする。
+  gherkin: true # 受入報告の保証範囲を読む
+  quint: false # 報告の範囲であり実行状態ではない
+  alloy: false # 保証範囲であり静的関係ではない
+REQ-050:
+  text: 人による観察の未実施だけを TAKT 実装の不合格理由にしない。
+  gherkin: true # 実装判定の報告を読む
+  quint: false # 合否の運用条件であり窓の実行状態ではない
+  alloy: false # 合否の報告であり静的関係ではない
+REQ-051:
+  text: 実際に画面を観察していない場合、機械的検証と区別して未確認と報告する。
+  gherkin: true # 検証報告を読む
+  quint: false # 報告の真実性は実環境の証拠と照合する
+  alloy: false # 報告内容であり静的関係ではない
+REQ-052:
+  text: trace.md に hidetopbar の固定出典・観察・本件との違いを自己完結的に記す。
+  gherkin: true # 仕様を読む外部検査
+  quint: false # 文書の要求であり状態遷移ではない
+  alloy: false # 文書内容であり静的関係ではない
+REQ-053:
+  text: hidetopbar のソースを複製・同梱しない。
+  gherkin: true # 成果物と差分を読む外部検査
+  quint: false # 変更範囲の制約であり実行状態ではない
+  alloy: false # 具体的な成果物検査で扱う
+REQ-054:
+  text: 外部ディレクトリを実装の前提となる参照先にしない。
+  gherkin: true # 仕様と配布物の参照を読む外部検査
+  quint: false # 参照先の制約であり実行状態ではない
+  alloy: false # 具体的な参照検査で扱う
