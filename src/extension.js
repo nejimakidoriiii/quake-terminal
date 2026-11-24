@@ -27,11 +27,42 @@ import {
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import { QuakeMode } from "./quake-mode.js";
 
+const MAXIMIZE_AND_HIDE_PANEL = "maximize-and-hide-panel";
+
 export default class QuakeTerminalExtension extends Extension {
   enable() {
     this._settings = this.getSettings();
-    this._appSystem = Shell.AppSystem.get_default();
     this._quakeMode = null;
+    this._maximizedPanelModeChangedId = this._settings.connect(
+      `changed::${MAXIMIZE_AND_HIDE_PANEL}`,
+      settings => {
+        const enabled = settings.get_boolean(MAXIMIZE_AND_HIDE_PANEL);
+        if (enabled === maximizedPanelMode.enabled) return;
+        maximizedPanelMode.enabled = enabled;
+        QuakeMode._clearOppositePendingDisplayGeometry(enabled);
+        const mode = this._quakeMode;
+        if (mode && mode._internalState !== QuakeMode.LIFECYCLE.DEAD)
+          mode._onMaximizedPanelModeChanged();
+      }
+    );
+    const maximizedPanelMode = {
+      enabled: this._settings.get_boolean(MAXIMIZE_AND_HIDE_PANEL),
+    };
+    this._maximizedPanelMode = maximizedPanelMode;
+
+    this._appSystem = Shell.AppSystem.get_default();
+    const terminalId = this._settings.get_string("terminal-id");
+    const terminal = terminalId && this._appSystem.lookup_app(terminalId);
+    if (terminal) {
+      const existingWindow = QuakeMode.findManagedWindow(terminal);
+      if (existingWindow)
+        this._quakeMode = new QuakeMode(
+          terminal,
+          this._settings,
+          this._maximizedPanelMode,
+          existingWindow
+        );
+    }
 
     Main.wm.addKeybinding(
       "terminal-shortcut",
@@ -48,6 +79,11 @@ export default class QuakeTerminalExtension extends Extension {
   disable() {
     Main.wm.removeKeybinding("terminal-shortcut");
 
+    if (this._settings && this._maximizedPanelModeChangedId) {
+      this._settings.disconnect(this._maximizedPanelModeChangedId);
+      this._maximizedPanelModeChangedId = null;
+    }
+
     if (this._quakeMode) {
       this._quakeMode.destroy();
     }
@@ -58,18 +94,19 @@ export default class QuakeTerminalExtension extends Extension {
   }
 
   _handleQuakeModeTerminal() {
-    if (this._quakeMode) {
-      if (
-        this._quakeMode._internalState === QuakeMode.LIFECYCLE.STARTING ||
-        this._quakeMode._internalState === QuakeMode.LIFECYCLE.CREATED_ACTOR
-      ) {
-        return Promise.resolve();
-      }
+    const mode = this._quakeMode;
+    const state = mode?._internalState;
+    if (
+      state === QuakeMode.LIFECYCLE.STARTING ||
+      state === QuakeMode.LIFECYCLE.CREATED_ACTOR
+    ) {
+      return Promise.resolve();
     }
 
     if (
-      !this._quakeMode ||
-      this._quakeMode._internalState === QuakeMode.LIFECYCLE.DEAD
+      !mode ||
+      state === QuakeMode.LIFECYCLE.DEAD ||
+      state === QuakeMode.LIFECYCLE.READY
     ) {
       const terminalId = this._settings.get_string("terminal-id");
 
@@ -85,10 +122,18 @@ export default class QuakeTerminalExtension extends Extension {
         return Promise.resolve();
       }
 
-      this._quakeMode = new QuakeMode(terminal, this._settings);
+      if (mode && state === QuakeMode.LIFECYCLE.READY) {
+        if (mode._terminal.get_id() === terminal.get_id()) return mode.toggle();
+        mode.destroy();
+      }
+      this._quakeMode = new QuakeMode(
+        terminal,
+        this._settings,
+        this._maximizedPanelMode
+      );
       return this._quakeMode.toggle();
     }
 
-    return this._quakeMode.toggle();
+    return mode.toggle();
   }
 }

@@ -5,8 +5,14 @@ import Shell from "gi://Shell";
 import Meta from "gi://Meta";
 import { PACKAGE_VERSION } from "resource:///org/gnome/shell/misc/config.js";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
+import { PanelAutohide } from "./panel-autohide.js";
 
 const SHELL_VERSION = Number.parseInt(PACKAGE_VERSION.split(".")[0]);
+const AUTO_HIDE_WINDOW = "auto-hide-window";
+const HIDE_TRANSITION = "translation-y";
+
+let pendingMaximizedGeometry = new WeakSet();
+let pendingSavedGeometryRestores = new WeakSet();
 
 const STARTUP_TIMER_IN_SECONDS = 5;
 
@@ -78,6 +84,20 @@ export const QuakeMode = class {
     DEAD: "DEAD",
   };
 
+  /** @param {boolean} enabled - The new maximized panel mode value. */
+  static _clearOppositePendingDisplayGeometry(enabled) {
+    if (enabled) pendingSavedGeometryRestores = new WeakSet();
+    else pendingMaximizedGeometry = new WeakSet();
+  }
+
+  /** @param {Shell.App} terminal - The configured application. */
+  static findManagedWindow(terminal) {
+    return terminal.get_windows().find(window => {
+      const actor = /** @type {Meta.WindowActor | null} */ (window.get_compositor_private());
+      return actor?.get_name() === "quake-terminal";
+    });
+  }
+
   /**
    * The default timeout (in seconds) for force-moving from CREATED_ACTOR to
    * RUNNING. This guards against the window/actor appearing but a subsequent
@@ -88,8 +108,10 @@ export const QuakeMode = class {
    *
    * @param {Shell.App} terminal - The terminal application instance.
    * @param {Gio.Settings} settings - The Gio.Settings object for configuration.
+   * @param {Readonly<{enabled: boolean}>} maximizedPanelMode - The current common mode state.
+   * @param {Meta.Window} [existingWindow] - A managed window surviving extension disable.
    */
-  constructor(terminal, settings) {
+  constructor(terminal, settings, maximizedPanelMode, existingWindow) {
     _log(
       `*** QuakeTerminal@constructor - IsWayland = ${SHELL_VERSION >= 50 || Meta.is_wayland_compositor()} ***`
     );
@@ -103,17 +125,22 @@ export const QuakeMode = class {
     this._terminal = terminal;
     this._settings = settings;
     this._internalState = QuakeMode.LIFECYCLE.READY;
+    this._maximizedPanelMode = maximizedPanelMode;
+    this._panelAutohide = new PanelAutohide();
+    this._panelAutohide.setEnabled(this._maximizedPanelMode.enabled);
 
     this._sourceTimeoutLoopId = null;
     this._stageViewFallbackTimeoutId = null;
-    this._resizeSignalId = null;
-    this._resizeTimeoutId = null;
+    this._resizeWait = null;
+    this._allowToggleDuringLaunchResize = false;
+    this._disconnectRedisplay = null;
     this._terminalWindowUnmanagedId = null;
     this._terminalWindowFocusId = null;
     this._wmMapSignalId = null;
     this._terminalChangedId = null;
     this._actorStageViewChangedId = null;
     this._clearAnimationClip = null;
+    this._cancelHideAnimation = null;
 
     /**
      *@type {Meta.Window}
@@ -140,7 +167,12 @@ export const QuakeMode = class {
         const settingsId = settings.connect(
           `changed::${prefAdjustment}`,
           () => {
-            this._fitTerminalToMainMonitor();
+            if (
+              this._internalState !== QuakeMode.LIFECYCLE.READY &&
+              !this._maximizedPanelMode.enabled
+            ) {
+              this._fitTerminalToMainMonitor(false);
+            }
           }
         );
 
@@ -151,6 +183,7 @@ export const QuakeMode = class {
     const alwaysOnTopSettingsId = settings.connect(
       "changed::always-on-top",
       () => {
+        if (this._internalState === QuakeMode.LIFECYCLE.READY) return;
         this._handleAlwaysOnTop();
       }
     );
@@ -160,11 +193,42 @@ export const QuakeMode = class {
     const skipTaskbarSettingsId = settings.connect(
       "changed::skip-taskbar",
       () => {
+        if (this._internalState === QuakeMode.LIFECYCLE.READY) return;
         this._configureSkipTaskbarProperty();
       }
     );
 
     this._settingsWatchingListIds.push(skipTaskbarSettingsId);
+    if (existingWindow) this._watchTerminalWindow(existingWindow);
+  }
+
+  get _pendingDisplayGeometry() {
+    return this._maximizedPanelMode.enabled
+      ? pendingMaximizedGeometry
+      : pendingSavedGeometryRestores;
+  }
+
+  _onMaximizedPanelModeChanged() {
+    this._allowToggleDuringLaunchResize = false;
+    const enabled = this._maximizedPanelMode.enabled;
+    this._panelAutohide.setEnabled(enabled);
+
+    const window = this._terminalWindow;
+    if (!window) return;
+    const actor = /** @type {Meta.WindowActor | null} */ (
+      window.get_compositor_private()
+    );
+    if (window.is_hidden() || !actor?.mapped) {
+      this._pendingDisplayGeometry.add(window);
+      return;
+    }
+
+    this._pendingDisplayGeometry.delete(window);
+    if (enabled) {
+      this._maximizeTerminal(window, window.get_monitor(), false);
+    } else {
+      this._fitTerminalToMainMonitor(true, window.get_monitor());
+    }
   }
 
   get terminalWindow() {
@@ -182,35 +246,63 @@ export const QuakeMode = class {
       _log(
         `*** QuakeTerminal@terminalWindow - There's no WindowActor, finding one ... ***`
       );
-      let ourWindow = this._terminal.get_windows().find((w) => {
-        /**
-         * The window actor for this terminal window.
-         *
-         * @type {Meta.WindowActor & { ease: Function }}
-         */
-        const actor = w.get_compositor_private();
-        return actor.get_name() === "quake-terminal" && w.is_alive;
-      });
+      const ourWindow = QuakeMode.findManagedWindow(this._terminal);
 
       if (!ourWindow) {
         return null;
       }
 
-      this._terminalWindow = ourWindow;
-      if (!this._terminalWindowUnmanagedId) {
-        this._terminalWindowUnmanagedId = this._terminalWindow.connect(
-          "unmanaged",
-          () => {
-            _log(
-              `*** QuakeTerminal@Unmanaged Called unmanaged after suspend or lockscreen ***`
-            );
-            this.destroy();
-          }
-        );
-      }
+      this._watchTerminalWindow(ourWindow);
     }
 
     return this._terminalWindow;
+  }
+
+  /** @param {Meta.Window} window - The terminal window owned by the extension. */
+  _watchTerminalWindow(window) {
+    this._terminalWindow = window;
+    this._terminalWindowUnmanagedId = window.connect("unmanaged", () => {
+      _log(`*** QuakeTerminal@Unmanaged Called unmanaged ***`);
+      pendingMaximizedGeometry.delete(window);
+      pendingSavedGeometryRestores.delete(window);
+      this.destroy();
+    });
+    const actor = /** @type {Meta.WindowActor} */ (window.get_compositor_private());
+    const onRedisplay = () => {
+      if (
+        window !== this._terminalWindow ||
+        window.get_compositor_private() !== actor ||
+        window.is_hidden() ||
+        !actor.mapped
+      ) {
+        return;
+      }
+
+      const wait = this._resizeWait;
+      if (wait?.window === window && wait.purpose === "recall")
+        this._cancelWaitForResize();
+
+      if (!this._pendingDisplayGeometry.delete(window)) return;
+      const monitor = window.get_monitor();
+      if (this._maximizedPanelMode.enabled)
+        this._maximizeTerminal(window, monitor, false);
+      else this._fitTerminalToMainMonitor(true, monitor);
+    };
+    const shownId = window.connect("shown", onRedisplay);
+    const mappedId = actor.connect("notify::mapped", onRedisplay);
+    this._disconnectRedisplay = () => {
+      window.disconnect(shownId);
+      actor.disconnect(mappedId);
+    };
+    this._panelAutohide.watch(window);
+    this._terminalWindowFocusId = Shell.Global.get().display.connect(
+      "notify::focus-window",
+      (source) => {
+        this._handleHideOnFocusLoss(source).catch((e) =>
+          _log(`*** QuakeTerminal@focus-window - ${e} ***`)
+        );
+      }
+    );
   }
 
   get actor() {
@@ -309,7 +401,14 @@ export const QuakeMode = class {
 
   destroy() {
     _log(`*** QuakeTerminal@destroy - Starting destroy action ***`);
-    this._clearAnimationClip?.();
+    this._disconnectRedisplay?.();
+    this._disconnectRedisplay = null;
+    this._allowToggleDuringLaunchResize = false;
+    this._cancelWaitForResize();
+    this._cancelHideAnimation?.();
+    const actor = this._terminalWindow?.get_compositor_private();
+    this._panelAutohide.destroy();
+    if (actor) this._clearAnimationClip?.();
     if (this._sourceTimeoutLoopId) {
       GLib.Source.remove(this._sourceTimeoutLoopId);
       this._sourceTimeoutLoopId = null;
@@ -320,16 +419,14 @@ export const QuakeMode = class {
       this._stageViewFallbackTimeoutId = null;
     }
 
-    this._cancelWaitForResize();
-
     if (this._settingsWatchingListIds.length && this._settings) {
       this._settingsWatchingListIds.forEach((id) => {
         this._settings.disconnect(id);
       });
     }
 
-    if (this.actor && this._actorStageViewChangedId) {
-      this.actor.disconnect(this._actorStageViewChangedId);
+    if (actor && this._actorStageViewChangedId) {
+      actor.disconnect(this._actorStageViewChangedId);
       this._actorStageViewChangedId = null;
     }
 
@@ -368,24 +465,22 @@ export const QuakeMode = class {
    * @returns {Promise<void>} A promise that resolves when the toggle operation is complete.
    */
   async toggle() {
+    const wait = this._resizeWait;
+    if (wait && (wait.purpose !== "launch" || !this._allowToggleDuringLaunchResize))
+      return;
+
     if (!this.terminalWindow) {
       try {
         await this._launchTerminalWindow();
-
-        // When the `map` signal was missed, _adjustTerminalWindowPosition()
-        // advances straight to RUNNING and shows the terminal synchronously.
-        // Running the focus/hide/show logic below on top of that would
-        // immediately undo the show, since the window is now focused.
-        if (this._adjustTerminalWindowPosition()) {
-          return;
-        }
+        this._adjustTerminalWindowPosition();
       } catch (error) {
         _log(`*** QuakeTerminal@toggle - Catch error ${error} ***`);
         this.destroy();
-        return;
       }
+      return;
     }
 
+    this._internalState = QuakeMode.LIFECYCLE.RUNNING;
     if (!this._isTaskbarConfigured) {
       this._configureSkipTaskbarProperty();
     }
@@ -395,7 +490,11 @@ export const QuakeMode = class {
     }
 
     if (this.terminalWindow.is_hidden()) {
-      this._fitTerminalToMainMonitor();
+      if (this._maximizedPanelMode.enabled) {
+        this._showTerminalAfterResize("recall");
+        return;
+      }
+      this._applyTerminalDisplayGeometry();
       return this._showTerminalWithAnimationTopDown();
     }
 
@@ -403,7 +502,7 @@ export const QuakeMode = class {
       return this._hideTerminalWithAnimationBottomUp();
     }
 
-    this._fitTerminalToMainMonitor();
+    this._applyTerminalDisplayGeometry();
     Main.activateWindow(this.terminalWindow);
   }
 
@@ -414,6 +513,7 @@ export const QuakeMode = class {
    */
   _launchTerminalWindow() {
     this._internalState = QuakeMode.LIFECYCLE.STARTING;
+    this._allowToggleDuringLaunchResize = !this._maximizedPanelMode.enabled;
 
     if (!this._terminal) {
       return Promise.reject(Error("Quake-Terminal - Terminal App is null"));
@@ -428,39 +528,26 @@ export const QuakeMode = class {
 
     const launchArgs = launchArgsMap[info.get_id()] || "";
     const cancellable = new Gio.Cancellable();
+    const existingWindows = new Set(this._terminal.get_windows());
+    const terminal = this._terminal;
 
     const promiseTerminalWindowInLessThanFiveSeconds = new Promise(
       (resolve, reject) => {
         const shellAppWindowsChangedHandler = () => {
-          GLib.Source.remove(this._sourceTimeoutLoopId);
+          const candidates = terminal.get_windows().filter((window) =>
+            !existingWindows.has(window) &&
+            window.get_window_type() === Meta.WindowType.NORMAL &&
+            !window.get_transient_for() &&
+            window.get_compositor_private()
+          );
+          if (candidates.length !== 1) return;
+          const [ourWindow] = candidates;
+          if (this._sourceTimeoutLoopId !== null)
+            GLib.Source.remove(this._sourceTimeoutLoopId);
           this._sourceTimeoutLoopId = null;
-
-          if (!this._terminal) {
-            return reject(
-              Error(
-                "Quake-Terminal - Something destroyed the internal reference of terminal app"
-              )
-            );
-          }
-
-          if (this._internalState !== QuakeMode.LIFECYCLE.STARTING) {
-            _log(
-              `*** QuakeTerminal@_launchTerminalWindow - Not in STARTING state, ignoring windows-changed signal ***`
-            );
-
-            this._terminal.disconnect(this._terminalChangedId);
-            return;
-          }
-
-          if (this._terminal.get_n_windows() < 1) {
-            return reject(
-              Error(
-                `Quake-Terminal - App '${this._terminal.id}' is launched but no windows`
-              )
-            );
-          }
-
-          const ourWindow = this._terminal.get_windows()[0];
+          if (this._terminalChangedId !== null)
+            terminal.disconnect(this._terminalChangedId);
+          this._terminalChangedId = null;
           /**
            * The window actor for this terminal window.
            *
@@ -468,35 +555,18 @@ export const QuakeMode = class {
            */
           const actor = ourWindow.get_compositor_private();
           actor.set_name("quake-terminal");
-          this._terminalWindow = ourWindow;
           this._internalState = QuakeMode.LIFECYCLE.CREATED_ACTOR;
+          this._watchTerminalWindow(ourWindow);
 
           // Keeps the Terminal out of Overview mode and Alt-Tab window switching
           this._configureSkipTaskbarProperty();
 
           this._handleAlwaysOnTop();
 
-          this._terminalWindowUnmanagedId = this.terminalWindow.connect(
-            "unmanaged",
-            () => {
-              _log(`*** QuakeTerminal@Unmanaged Called unmanaged ***`);
-              this.destroy();
-            }
-          );
-
-          this._terminalWindowFocusId = Shell.Global.get().display.connect(
-            "notify::focus-window",
-            (source) => {
-              this._handleHideOnFocusLoss(source).catch((e) =>
-                _log(`*** QuakeTerminal@focus-window - ${e} ***`)
-              );
-            }
-          );
-
           resolve(true);
         };
 
-        this._terminalChangedId = this._terminal.connect(
+        this._terminalChangedId = terminal.connect(
           "windows-changed",
           shellAppWindowsChangedHandler
         );
@@ -538,15 +608,13 @@ export const QuakeMode = class {
   /**
    * Adjusts the terminal window's initial position and handles signal connections related
    * to window mapping and sizing.
-   *
-   * @returns {boolean} True when the terminal was advanced to RUNNING immediately.
    */
   _adjustTerminalWindowPosition() {
     if (!this.terminalWindow || !this.actor) {
       _log(
         `*** QuakeTerminal@_adjustTerminalWindowPosition - No terminalWindow || actor ***`
       );
-      return false;
+      return;
     }
 
     this.terminalWindow.stick();
@@ -569,7 +637,7 @@ export const QuakeMode = class {
       if (this._internalState !== QuakeMode.LIFECYCLE.CREATED_ACTOR) return;
       _log(`*** QuakeTerminal@advanceToRunning - Advancing to RUNNING ***`);
       this._internalState = QuakeMode.LIFECYCLE.RUNNING;
-      this._showTerminalAfterResize();
+      this._showTerminalAfterResize("launch");
     };
 
     if (this.actor.is_mapped()) {
@@ -583,7 +651,7 @@ export const QuakeMode = class {
       this.actor.opacity = 0;
       Shell.Global.get().window_manager.emit("kill-window-effects", this.actor);
       advanceToRunning();
-      return true;
+      return;
     }
 
     const mapSignalHandler = (
@@ -628,8 +696,6 @@ export const QuakeMode = class {
         return GLib.SOURCE_REMOVE;
       }
     );
-
-    return false;
   }
 
   _shouldAvoidAnimation() {
@@ -716,78 +782,152 @@ export const QuakeMode = class {
   }
 
   _hideTerminalWithAnimationBottomUp() {
-    if (this._shouldAvoidAnimation()) {
-      return;
-    }
+    const actor = this.actor;
+    if (!actor) return;
 
-    const clearClip = this._clipAnimationAboveTerminal(this.actor);
-    this.actor.ease({
+    const window = actor.meta_window;
+    const clearClip = this._clipAnimationAboveTerminal(actor);
+    /** @type {Clutter.Transition | null} */
+    let transition = null;
+    const cancelHideAnimation = () => {
+      this._cancelHideAnimation = null;
+      if (
+        !transition ||
+        this._clearAnimationClip !== clearClip ||
+        actor.get_transition(HIDE_TRANSITION) !== transition
+      ) {
+        return;
+      }
+      actor.remove_transition(HIDE_TRANSITION);
+      if (
+        window.get_compositor_private() === actor &&
+        actor.get_transition(HIDE_TRANSITION) === null
+      ) {
+        actor.translation_y = 0;
+      }
+    };
+    this._cancelHideAnimation = cancelHideAnimation;
+
+    actor.ease({
       mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-      translation_y: this.actor.height * -1,
+      translation_y: actor.height * -1,
       duration: this._settings.get_int("animation-time"),
-      onStopped: () => clearClip(),
-      onComplete: () => {
-        Main.wm.skipNextEffect(this.actor);
-        this.actor.meta_window.minimize();
-        this.actor.translation_y = 0;
+      onStopped: (/** @type {boolean} */ finished) => {
+        const ownsClip = this._clearAnimationClip === clearClip;
+        clearClip();
+        if (this._cancelHideAnimation !== cancelHideAnimation) return;
+        this._cancelHideAnimation = null;
+        if (!finished || !ownsClip) return;
+
+        Main.wm.skipNextEffect(actor);
+        window.minimize();
+        actor.translation_y = 0;
       },
     });
+    if (this._cancelHideAnimation === cancelHideAnimation)
+      transition = actor.get_transition(HIDE_TRANSITION);
   }
 
   /**
    * Resizes the terminal, then shows it. On Wayland a resize only lands once
    * the terminal redraws, so showing it right away would slide in the old
    * size, e.g. the full width GNOME auto-maximized it to on launch.
+   *
+   * @param {"launch" | "recall"} purpose - The operation waiting for the resize.
    */
-  _showTerminalAfterResize() {
-    this._cancelWaitForResize();
-
-    if (!this._fitTerminalToMainMonitor()) {
-      this._showTerminalWithAnimationTopDown();
-      return;
-    }
-
-    const show = () => {
-      this._cancelWaitForResize();
+  _showTerminalAfterResize(purpose) {
+    const enabled = this._maximizedPanelMode.enabled;
+    const display = () => {
+      if (purpose === "launch") this._allowToggleDuringLaunchResize = false;
       this._showTerminalWithAnimationTopDown();
     };
 
-    this._resizeSignalId = this.terminalWindow.connect("size-changed", show);
-    this._resizeTimeoutId = GLib.timeout_add(
+    if (!this._applyTerminalDisplayGeometry()) {
+      display();
+      return;
+    }
+
+    const window = this._terminalWindow;
+    const wait = { window, purpose, signalId: 0, timeoutId: 0 };
+    const show = () => {
+      if (this._resizeWait !== wait) return;
+      this._cancelWaitForResize();
+      if (
+        this._maximizedPanelMode.enabled !== enabled ||
+        this._pendingDisplayGeometry.has(window)
+      )
+        this._showTerminalAfterResize(purpose);
+      else display();
+    };
+
+    wait.signalId = window.connect("size-changed", show);
+    wait.timeoutId = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
       RESIZE_TIMEOUT_IN_MS,
       () => {
-        this._resizeTimeoutId = null;
+        wait.timeoutId = 0;
         show();
         return GLib.SOURCE_REMOVE;
       }
     );
+    this._resizeWait = wait;
   }
 
   /**
    * Stops waiting for the resize started by _showTerminalAfterResize().
    */
   _cancelWaitForResize() {
-    if (this._resizeTimeoutId) {
-      GLib.Source.remove(this._resizeTimeoutId);
-      this._resizeTimeoutId = null;
-    }
+    const wait = this._resizeWait;
+    if (!wait) return;
+    this._resizeWait = null;
+    if (wait.timeoutId) GLib.Source.remove(wait.timeoutId);
+    wait.window.disconnect(wait.signalId);
+  }
 
-    if (this._resizeSignalId && this.terminalWindow) {
-      this.terminalWindow.disconnect(this._resizeSignalId);
-    }
-    this._resizeSignalId = null;
+  _applyTerminalDisplayGeometry() {
+    const window = this.terminalWindow;
+    if (!window) return false;
+    const wasPending = this._pendingDisplayGeometry.delete(window);
+    if (!this._maximizedPanelMode.enabled)
+      return this._fitTerminalToMainMonitor(wasPending);
+
+    return this._maximizeTerminal(window, this.monitorDisplayScreenIndex, true);
   }
 
   /**
+   * @param {Meta.Window} window - The managed terminal.
+   * @param {number} monitor - The resolved logical monitor index.
+   * @param {boolean} alwaysPlace - Apply placement even if the window was not fullscreen.
+   */
+  _maximizeTerminal(window, monitor, alwaysPlace) {
+    const fullscreen = window.fullscreen;
+    const monitorChanged = alwaysPlace && window.get_monitor() !== monitor;
+    if (fullscreen) window.unmake_fullscreen();
+    if (fullscreen || alwaysPlace) window.move_to_monitor(monitor);
+    if (window.maximized_horizontally && window.maximized_vertically)
+      return fullscreen || monitorChanged;
+    if (SHELL_VERSION >= 49) {
+      const maximize = /** @type {() => void} */ (window.maximize);
+      maximize.call(window);
+    } else {
+      window.maximize(Meta.MaximizeFlags.BOTH);
+    }
+    return true;
+  }
+
+  /**
+   * @param {boolean} restoringSavedGeometry - Apply a switch out of maximized mode.
+   * @param {number} [monitorDisplayScreenIndex] - Keep the current monitor for a settings change.
    * @returns {boolean} True when the window must change size, which happens
    * asynchronously on Wayland.
    */
-  _fitTerminalToMainMonitor() {
+  _fitTerminalToMainMonitor(restoringSavedGeometry, monitorDisplayScreenIndex) {
     if (!this.terminalWindow) {
       return false;
     }
-    const monitorDisplayScreenIndex = this.monitorDisplayScreenIndex;
+    monitorDisplayScreenIndex ??= this.monitorDisplayScreenIndex;
+    if (restoringSavedGeometry && this.terminalWindow.fullscreen)
+      this.terminalWindow.unmake_fullscreen();
     const area = this.terminalWindow.get_work_area_for_monitor(
       monitorDisplayScreenIndex
     );
@@ -819,8 +959,15 @@ export const QuakeMode = class {
     // and a maximized window ignores the size below. GNOME 49 removed the
     // flags parameter and renamed get_maximized() to is_maximized().
     if (SHELL_VERSION >= 49) {
-      if (this.terminalWindow.is_maximized()) {
-        this.terminalWindow.unmaximize();
+      const window = /** @type {Meta.Window & {is_maximized(): boolean}} */ (
+        this.terminalWindow
+      );
+      const maximized = restoringSavedGeometry
+        ? window.maximized_horizontally || window.maximized_vertically
+        : window.is_maximized();
+      if (maximized) {
+        const unmaximize = /** @type {() => void} */ (window.unmaximize);
+        unmaximize.call(window);
       }
     } else {
       const getMaximized = this.terminalWindow.get_maximized;
@@ -920,21 +1067,24 @@ export const QuakeMode = class {
    * @param {Meta.Display} source - The display object.
    */
   async _handleHideOnFocusLoss(source) {
-    const shouldAutoHide = this._settings.get_boolean("auto-hide-window");
-
-    if (!shouldAutoHide) {
+    const window = this._terminalWindow;
+    const focusedWindow = source.focus_window;
+    if (
+      !window ||
+      focusedWindow === window ||
+      window.is_hidden() ||
+      !this._settings.get_boolean(AUTO_HIDE_WINDOW) ||
+      (await is_wlclipboard(focusedWindow))
+    ) {
       return;
     }
 
-    if (!source) {
-      return;
-    }
-
-    if (await is_wlclipboard(source.focus_window)) {
-      return;
-    }
-
-    if (source.focus_window === this.terminalWindow) {
+    if (
+      this._terminalWindow !== window ||
+      source.focus_window !== focusedWindow ||
+      window.is_hidden() ||
+      !this._settings.get_boolean(AUTO_HIDE_WINDOW)
+    ) {
       return;
     }
 
