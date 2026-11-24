@@ -57,6 +57,11 @@
 			<summary>Display</summary>
   		<description>Specify the display where the terminal should be rendered</description>
 		</key>
+    <key name="maximize-and-hide-panel" type="b">
+      <default>false</default>
+      <summary>Maximize Terminal and Hide Top Panel</summary>
+      <description>Maximize the terminal on show or recall and hide the top panel while the maximized terminal is focused on its monitor.</description>
+    </key>
 		<key name="auto-hide-window" type="b">
 			<default>true</default>
 			<summary>Auto Hide Terminal</summary>

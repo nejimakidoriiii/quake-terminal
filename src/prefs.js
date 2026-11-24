@@ -430,6 +430,20 @@ export default class QuakeTerminalPreferences extends ExtensionPreferences {
     shortcutRow.activatable_widget = shortcutLabel;
     generalSettingsGroup.add(shortcutRow);
 
+    const maximizeAndHidePanelRow = new Adw.SwitchRow({
+      title: _("Maximize Terminal and Hide Top Panel"),
+      subtitle: _(
+        "Maximize the terminal when shown and hide the top panel while the maximized terminal is focused on that display"
+      ),
+    });
+    generalSettingsGroup.add(maximizeAndHidePanelRow);
+    settings.bind(
+      "maximize-and-hide-panel",
+      maximizeAndHidePanelRow,
+      "active",
+      Gio.SettingsBindFlags.DEFAULT
+    );
+
     // Auto Hide Window
     const autoHideWindowRow = new Adw.SwitchRow({
       title: _("Auto Hide Terminal"),
