@@ -1,0 +1,195 @@
+REQ-001:
+  text: "対象の Launch では最初の描画までに Panel を非表示にする。"
+  gherkin: true # 最初の可視フレームを観察する。
+  quint: true # 表示準備と描画境界の順序を制約する。
+  alloy: false # 時間順序であり静的な関係ではない。
+REQ-002:
+  text: "対象の Recall では最初の描画までに Panel を非表示にする。"
+  gherkin: true # 再表示の最初の可視フレームを観察する。
+  quint: true # 隠れた状態からの描画境界を制約する。
+  alloy: false # 再表示の時間順序は Quint で扱う。
+REQ-003:
+  text: "対象の FocusReturn では最初の描画までに Panel を非表示にする。"
+  gherkin: true # フォーカス確定後の画面を観察する。
+  quint: true # フォーカス確定と次の描画を区別する。
+  alloy: false # 静的構造ではなく描画期限である。
+REQ-004:
+  text: "Panel の消失で移動、部分表示、フェードの途中を描画しない。"
+  gherkin: true # 時計、背景、部分表示、濃度を実画面で観察する。
+  quint: false # 離散的な可視性から画素の途中状態は証明できない。
+  alloy: false # 描画の見え方であり構造制約ではない。
+REQ-005:
+  text: "他の上端 Reservation がなければ Launch/Recall の最初から上端基準でスライドする。"
+  gherkin: true # 登場開始時の位置を観察する。
+  quint: true # 描画前に作業領域反映が完了する順序を制約する。
+  alloy: false # 画面上端の反映時点は状態遷移である。
+REQ-006:
+  text: "他の上端 Reservation がなければ FocusReturn の最初の描画で画面上端に達する。"
+  gherkin: true # 復帰後最初の位置を観察する。
+  quint: true # 表示中の窓の作業領域反映を描画前に要求する。
+  alloy: false # 位置の反映期限は構造制約ではない。
+REQ-007:
+  text: "旧 Panel 分の帯が後から詰まる描画を表示しない。"
+  gherkin: true # 帯の遅れを画面で観察する。
+  quint: true # Reservation 解放と作業領域反映を描画境界より前に置く。
+  alloy: false # 遅れは時間順序の性質である。
+REQ-008:
+  text: "Launch/Recall の既存の登場スライドを維持する。"
+  gherkin: true # 開始 HEAD のスライドと比較する。
+  quint: true # Launch/Recall だけが登場スライドを開始する。
+  alloy: false # スライド開始は動的な操作である。
+REQ-009:
+  text: "FocusReturn で登場スライドを再生し直さない。"
+  gherkin: true # 復帰時に再度スライドしないことを観察する。
+  quint: true # 復帰の描画ではスライド開始を増やさない。
+  alloy: false # 動作の非発生は遷移で扱う。
+REQ-010:
+  text: "FocusReturn の方法を制限せず Click、確定した AltTab、Shortcut に適用する。"
+  gherkin: true # 入力方法ごとに同じ受入結果を観察する。
+  quint: true # 復帰方法に依存しない遷移を定義する。
+  alloy: false # 入力方法の同等な処理は構造制約ではない。
+REQ-011:
+  text: "Selecting を FocusReturn として扱わない。"
+  gherkin: true # 選択中に復帰のための非表示を先行しないことを観察する。
+  quint: true # 選択とフォーカス確定を別遷移にする。
+  alloy: false # 入力の確定順序は動的な性質である。
+REQ-012:
+  text: "Hide を FocusReturn として扱わない。"
+  gherkin: true # 非表示分岐を復帰分岐と区別する。
+  quint: true # Hide は復元側の遷移である。
+  alloy: false # ショートカットの分岐は状態遷移である。
+REQ-013:
+  text: "Pending では Panel を先に隠さない。"
+  gherkin: true # 起動待ちの画面が変わらないことを観察する。
+  quint: true # 対象確定前の非表示を禁止する。
+  alloy: false # 未確定から確定への順序は Quint で扱う。
+REQ-014:
+  text: "失敗・中断・条件喪失では自分の Panel 可視性の変更だけを取り消す。"
+  gherkin: true # 復元後の表示を観察する。
+  quint: true # 可視性の元の値と復元を検査する。
+  alloy: false # 復元は時間的な操作であり所有先の構造は REQ-017 で扱う。
+REQ-015:
+  text: "失敗・中断・条件喪失では自分の Reservation の変更だけを取り消す。"
+  gherkin: true # 復元した作業領域を観察する。
+  quint: true # 予約の元の値を可視性と独立に復元する。
+  alloy: false # 復元遷移は Quint、所有範囲は REQ-018 で扱う。
+REQ-016:
+  text: "元から非表示の Panel を強制表示しない。"
+  gherkin: true # 元の非表示が維持されることを観察する。
+  quint: true # パネル ID ごとの元の可視性を保持する。
+  alloy: false # 復元前後の状態差は静的制約ではない。
+REQ-017:
+  text: "別 Monitor の Panel に干渉しない。"
+  gherkin: true # 対象外モニターの画面を観察する。
+  quint: true # Panel ID ごとに配置と値を保持する。
+  alloy: true # 操作対象 Panel と Terminal の Monitor 関係を制限する。
+REQ-018:
+  text: "Panel 自身が所有しない Reservation に干渉しない。"
+  gherkin: true # 他の予約による作業領域が維持される。
+  quint: true # 他所有者の予約を Panel の予約と区別する。
+  alloy: true # 操作対象 Reservation の所有者を対象 Panel に限定する。
+REQ-019:
+  text: "対象 Panel の非表示では自身の Reservation を解放する。"
+  gherkin: true # パネル分の予約が残らないことを観察する。
+  quint: true # 非表示準備時に可視性と予約を独立に解除する。
+  alloy: false # 解放の有無は動的な状態であり所有範囲だけを Alloy で扱う。
+REQ-020:
+  text: "Hide の既存の非表示スライドを維持する。"
+  gherkin: true # 開始 HEAD の逆操作のスライドと比較する。
+  quint: true # Hide を非表示スライドの遷移として区別する。
+  alloy: false # スライドは動的な表示動作である。
+REQ-021:
+  text: "Hide に伴う自分の可視性変更の復元では瞬時の再表示を維持する。"
+  gherkin: true # 再表示の途中の動きがないことを観察する。
+  quint: true # Hide の復元後に元の可視性になることを検査する。
+  alloy: false # 瞬時の復元は構造ではなく順序と描画の性質である。
+REQ-022:
+  text: "通常の縦横最大化を維持しフルスクリーンで代用しない。"
+  gherkin: true # 両軸最大化と非フルスクリーンを観察する。
+  quint: true # 対象条件と表示遷移で窓状態を保存する。
+  alloy: false # 可変の窓状態は Quint で扱う。
+REQ-023:
+  text: "Terminal 側の透過設定変更で代用しない。"
+  gherkin: true # 設定値と表示の変更前後を比較する。
+  quint: false # 端末アプリの設定変更はモデルの対象操作に含めない。
+  alloy: false # 設定値の不変更は所有関係ではない。
+REQ-024:
+  text: "Terminal のアニメーション設定変更で代用しない。"
+  gherkin: true # 同じ設定値での既存スライドと比較する。
+  quint: false # 曲線や時間設定は離散的なスライド開始と別に実物で比較する。
+  alloy: false # アニメーションの設定は構造制約ではない。
+REQ-025:
+  text: "既存の eligible 条件と復元規則を維持する。"
+  gherkin: true # 各対象外条件で表示と予約が復元される。
+  quint: true # 実際の shown・mapped・フォーカスと表示要求・初描画を区別し、全条件の失効と復元を表す。
+  alloy: false # eligibility と失効は可変状態の規則である。
+REQ-026:
+  text: "既存 node:test で Launch の処理順序を検査する。"
+  gherkin: true # 後続実装のテストと検査結果を照合する。
+  quint: false # テストを実行する工程は製品の状態遷移ではない。
+  alloy: false # テスト工程は構造制約ではない。
+REQ-027:
+  text: "既存 node:test で Recall の処理順序を検査する。"
+  gherkin: true # 後続実装のテストと検査結果を照合する。
+  quint: false # 実装のテスト工程は状態モデルから外す。
+  alloy: false # 実装のテスト工程は構造制約ではない。
+REQ-028:
+  text: "既存 node:test で中断時の復元を検査する。"
+  gherkin: true # テストが中断と独立した復元を検査することを照合する。
+  quint: false # 製品の復元遷移自体は REQ-014、REQ-015 で扱う。
+  alloy: false # テストの存在と実行は構造制約ではない。
+REQ-029:
+  text: "既存 node:test で通常の FocusReturn を検査する。"
+  gherkin: true # 通常の復帰のテストと検査結果を照合する。
+  quint: false # 検証工程と製品動作を区別する。
+  alloy: false # 検証工程は構造制約ではない。
+REQ-030:
+  text: "既存 node:test で Shortcut の FocusReturn を検査する。"
+  gherkin: true # ショートカット復帰のテストと検査結果を照合する。
+  quint: false # 検証工程と製品動作を区別する。
+  alloy: false # 検証工程は構造制約ではない。
+REQ-031:
+  text: "後続実装で新しい依存パッケージを追加しない。"
+  gherkin: true # 依存パッケージの差分を照合する。
+  quint: false # 配布物の差分確認は製品の状態遷移ではない。
+  alloy: false # 新しい所有関係や多重度を定める要求ではない。
+REQ-032:
+  text: "後続実装で CI を追加しない。"
+  gherkin: true # CI の差分を照合する。
+  quint: false # リポジトリの変更範囲は製品状態ではない。
+  alloy: false # 変更範囲であり構造モデルを必要としない。
+REQ-033:
+  text: "後続実装で GUI テスト基盤を追加しない。"
+  gherkin: true # GUI テスト基盤の差分を照合する。
+  quint: false # リポジトリの変更範囲は製品状態ではない。
+  alloy: false # 変更範囲であり構造モデルを必要としない。
+REQ-034:
+  text: "対象環境の実画面で Launch の受入条件を確認する。"
+  gherkin: true # 指定環境での観察記録を照合する。
+  quint: false # 実画面の描画は形式状態だけでは証明できない。
+  alloy: false # 実環境の観察は構造制約ではない。
+REQ-035:
+  text: "対象環境の実画面で Recall の受入条件を確認する。"
+  gherkin: true # 指定環境での観察記録を照合する。
+  quint: false # 実画面の描画は形式状態だけでは証明できない。
+  alloy: false # 実環境の観察は構造制約ではない。
+REQ-036:
+  text: "対象環境の実画面で代表的な FocusReturn を少なくとも一つ確認する。"
+  gherkin: true # 代表操作と実画面の観察記録を照合する。
+  quint: false # 全方法の抽象的同等性と実観察を区別する。
+  alloy: false # 実環境の観察は構造制約ではない。
+REQ-037:
+  text: "実画面がなければ実画面は未確認と明記し機械的合格と区別する。"
+  gherkin: true # 実装の完了報告を照合する。
+  quint: false # 報告内容は製品の状態遷移ではない。
+  alloy: false # 報告内容は構造制約ではない。
+REQ-038:
+  text: "実画面の未観察だけでは TAKT 実装タスクを不合格にしない。"
+  gherkin: true # 観察状況と合否理由を照合する。
+  quint: false # 作業の判定規則は製品の状態遷移ではない。
+  alloy: false # 作業の判定規則は構造制約ではない。
+REQ-039:
+  text: "受入条件に反する実描画を観察した場合は実装を不合格とする。"
+  gherkin: true # 実際の観察結果と合否を照合する。
+  quint: false # 実装の合否は製品状態ではない。
+  alloy: false # 実装の合否は構造制約ではない。
